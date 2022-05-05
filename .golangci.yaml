@@ -26,6 +26,7 @@ linters:
     - ifshort
     - exhaustivestruct
     - testpackage
+    - errchkjson
   fast: false
 
 issues:

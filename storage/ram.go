@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"sync"
+	"sync/atomic"
 
 	"github.com/opoccomaxao-go/rooms/constants"
 	"github.com/pkg/errors"
@@ -11,6 +12,7 @@ import (
 
 type RAM struct {
 	tokens [][]byte
+	roomID uint64
 	mu     sync.Mutex
 }
 
@@ -56,4 +58,8 @@ func (s *RAM) Validate(token []byte) (uint64, error) {
 	}
 
 	return 0, errors.Wrap(constants.ErrInvalid, "token")
+}
+
+func (s *RAM) NewRoom() uint64 {
+	return atomic.AddUint64(&s.roomID, 1)
 }

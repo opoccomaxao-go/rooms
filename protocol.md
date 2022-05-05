@@ -7,6 +7,7 @@
 | 1   | [AuthRequired](#authrequired) |
 | 2   | [AuthSuccess](#authsuccess)   |
 | 3   | [RoomCreate](#roomcreate)     |
+| 4   | [RoomCancel](#roomcancel)     |
 
 ### AuthRequired
 
@@ -19,7 +20,7 @@ Events:
 
 Payload: error text, string
 
-Occurs on connection/reconnection to notify session server for authorization. Session server should reset all flags like stop, but keep existing rooms.
+Occurs on connection/reconnection to notify session server for authorization. Session server should keep existing rooms.
 
 ### AuthSuccess
 
@@ -37,13 +38,24 @@ After this command master could create rooms on session server.
 
 ID: 3
 
-Sender: master
-
 Event:
 
 - on external request
 
 Payload: room id, client ids
+
+Request for new room with specified id and clients.
+
+### RoomCancel
+
+ID: 4
+
+Event:
+
+- on external request
+- on room errors
+
+Payload: room id
 
 Request for new room with specified id and clients.
 

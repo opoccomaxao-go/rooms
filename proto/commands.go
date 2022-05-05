@@ -4,6 +4,7 @@ const (
 	CommandMasterAuthRequired uint16 = iota + 1
 	CommandMasterAuthSuccess
 	CommandMasterRoomCreate
+	CommandMasterRoomCancel
 )
 
 const (

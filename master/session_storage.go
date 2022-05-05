@@ -1,24 +1,39 @@
 package master
 
 import (
+	"context"
 	"log"
 	"sync"
 
 	"github.com/opoccomaxao-go/ipc/channel"
+	"github.com/opoccomaxao-go/ipc/event"
+	"github.com/opoccomaxao-go/rooms/proto"
+	"github.com/opoccomaxao-go/rooms/storage"
 	"github.com/pkg/errors"
 )
 
 type SessionStorage struct {
-	Clients map[uint64]*SessionServer
-	Logger  *log.Logger
+	clients map[uint64]*SessionServer
+	logger  *log.Logger
+	storage storage.Storage
+	trigger *sync.Cond
 	mu      sync.Mutex
+}
+
+func newSessionStorage(cfg *Config) *SessionStorage {
+	return &SessionStorage{
+		clients: map[uint64]*SessionServer{},
+		logger:  cfg.Logger,
+		storage: cfg.Storage,
+		trigger: sync.NewCond(&sync.Mutex{}),
+	}
 }
 
 func (s *SessionStorage) Handle(conn *channel.Channel) {
 	server := SessionServer{
-		conn:    conn,
-		handler: s,
-		logger:  s.Logger,
+		conn:   conn,
+		parent: s,
+		logger: s.logger,
 	}
 
 	server.Serve()
@@ -28,12 +43,85 @@ func (s *SessionStorage) Register(id uint64, client *SessionServer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if prev, ok := s.Clients[id]; ok {
+	if prev, ok := s.clients[id]; ok {
 		err := errors.Wrap(client.FlushInstance(prev), "flush error")
 		if err != nil {
-			s.Logger.Printf("%v\n", err)
+			s.logger.Printf("%v\n", err)
 		}
 	}
 
-	s.Clients[id] = client
+	s.clients[id] = client
+}
+
+func (s *SessionStorage) Unregister(id uint64, client *SessionServer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if prev, ok := s.clients[id]; ok {
+		if prev == client {
+			delete(s.clients, id)
+		}
+	}
+}
+
+func (s *SessionStorage) TriggerStats() {
+	s.trigger.Broadcast()
+}
+
+func (s *SessionStorage) WaitStats() <-chan struct{} {
+	res := make(chan struct{}, 1)
+
+	go func() {
+		s.trigger.Wait()
+		res <- struct{}{}
+		close(res)
+	}()
+
+	return res
+}
+
+func (s *SessionStorage) getFreeServer() *SessionServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var best *SessionServer
+
+	for _, ss := range s.clients {
+		if ss.Stats.Capacity > 0 && (best == nil || ss.Stats.Capacity > best.Stats.Capacity) {
+			best = ss
+		}
+	}
+
+	return best
+}
+
+func (s *SessionStorage) CreateRoom(ctx context.Context, room *proto.Room) (*proto.Room, error) {
+	for {
+		best := s.getFreeServer()
+
+		if best == nil {
+			select {
+			case <-ctx.Done():
+				server := s.clients[room.ServerID]
+				if server != nil {
+					server.conn.Send(&event.Common{
+						Type:    proto.CommandMasterRoomCancel,
+						Payload: proto.PayloadID(room.ID),
+					})
+				}
+				return nil, ctx.Err()
+			case <-s.WaitStats():
+				continue
+			}
+		}
+
+		// TODO: create room response waiter
+
+		best.conn.Send(&event.Common{
+			Type:    proto.CommandMasterRoomCreate,
+			Payload: room.Payload(),
+		})
+
+		// TODO: wait response and return
+	}
 }

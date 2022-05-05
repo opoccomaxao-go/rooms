@@ -1,13 +1,15 @@
 package storage
 
 import (
+	"math"
+	"sync/atomic"
 	"testing"
 
 	"github.com/opoccomaxao-go/rooms/constants"
 	"github.com/stretchr/testify/require"
 )
 
-func TestRAM(t *testing.T) {
+func TestRAM_Validate(t *testing.T) {
 	t.Parallel()
 
 	storage := NewRAM()
@@ -65,5 +67,28 @@ func TestRAM(t *testing.T) {
 		id, err := storage.Validate(token)
 		require.ErrorIs(t, err, constants.ErrInvalid)
 		require.Zero(t, id)
+	}
+}
+
+func TestRAM_NewRoom(t *testing.T) {
+	t.Parallel()
+
+	storage := NewRAM()
+
+	const TotalIDs = math.MaxUint16 + 1
+
+	var res [TotalIDs]int64
+
+	for i := 0; i < TotalIDs; i++ {
+		go func() {
+			id := storage.NewRoom()
+			if id < TotalIDs {
+				atomic.AddInt64(&res[id], 1)
+			}
+		}()
+	}
+
+	for i, v := range res {
+		require.GreaterOrEqual(t, int64(1), v, i)
 	}
 }
