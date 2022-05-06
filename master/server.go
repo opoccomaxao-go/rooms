@@ -51,7 +51,6 @@ func New(cfg Config) (*Server, error) {
 		Address: cfg.SessionAddress,
 		Handler: sessionStorage,
 	})
-
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}

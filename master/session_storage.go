@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/opoccomaxao-go/ipc/channel"
-	"github.com/opoccomaxao-go/ipc/event"
 	"github.com/opoccomaxao-go/rooms/proto"
 	"github.com/opoccomaxao-go/rooms/storage"
 	"github.com/pkg/errors"
@@ -96,32 +95,30 @@ func (s *SessionStorage) getFreeServer() *SessionServer {
 }
 
 func (s *SessionStorage) CreateRoom(ctx context.Context, room *proto.Room) (*proto.Room, error) {
+	done := ctx.Done()
+
 	for {
 		best := s.getFreeServer()
 
 		if best == nil {
 			select {
-			case <-ctx.Done():
-				server := s.clients[room.ServerID]
-				if server != nil {
-					server.conn.Send(&event.Common{
-						Type:    proto.CommandMasterRoomCancel,
-						Payload: proto.PayloadID(room.ID),
-					})
-				}
+			case <-done:
 				return nil, ctx.Err()
 			case <-s.WaitStats():
 				continue
 			}
 		}
 
-		// TODO: create room response waiter
+		waiter := best.WaitRoomCreateResult(ctx, room.ID)
 
-		best.conn.Send(&event.Common{
-			Type:    proto.CommandMasterRoomCreate,
-			Payload: room.Payload(),
-		})
+		best.RoomCreate(room)
 
-		// TODO: wait response and return
+		res := <-waiter
+
+		if res.Error != nil {
+			best.RoomCancel(room.ID)
+		}
+
+		return res.Room, res.Error
 	}
 }

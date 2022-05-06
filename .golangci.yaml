@@ -27,7 +27,7 @@ linters:
     - exhaustivestruct
     - testpackage
     - errchkjson
-  fast: false
+  fast: true
 
 issues:
   fix: true
