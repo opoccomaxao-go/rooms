@@ -183,6 +183,8 @@ func (s *Server) CreateRoom(userIDs []uint64) (*proto.Room, error) {
 			continue
 		}
 
+		res.Room.ServerID = best.id
+
 		return res.Room, res.Error
 	}
 }
@@ -206,7 +208,7 @@ func (s *Server) removeFinishedListener(listener chan *proto.Room) {
 	s.listenersFinished = slices.Delete(s.listenersFinished, index, 1)
 }
 
-// FinishedRooms creates channel which closed with ctx.Done().
+// FinishedRooms creates channel-receiver of all finished rooms. To close channel cancel context ctx.
 func (s *Server) FinishedRooms(ctx context.Context) <-chan *proto.Room {
 	res := make(chan *proto.Room, DefaultRoomListenerCapacity)
 

@@ -33,95 +33,95 @@ type connWrapper struct {
 	mu sync.RWMutex
 }
 
-func (s *connWrapper) onAuth(payload []byte) {
-	id, err := s.parent.config.Storage.Validate(payload)
+func (c *connWrapper) onAuth(payload []byte) {
+	id, err := c.parent.config.Storage.Validate(payload)
 	if err != nil {
-		s.logger.Printf("%v\n", errors.WithStack(err))
-		s.AuthRequired(err)
+		c.logger.Printf("%v\n", errors.WithStack(err))
+		c.AuthRequired(err)
 
 		return
 	}
 
-	s.parent.register(id, s)
-	s.parent.unregister(s.id, s)
-	s.id = id
-	s.AuthSuccess()
+	c.parent.register(id, c)
+	c.parent.unregister(c.id, c)
+	c.id = id
+	c.AuthSuccess()
 }
 
-func (s *connWrapper) onRoomCreated(payload []byte) {
+func (c *connWrapper) onRoomCreated(payload []byte) {
 	var room proto.Room
 
 	err := room.Read(payload)
 	if err != nil {
-		s.logger.Printf("%v\n", errors.WithStack(err))
+		c.logger.Printf("%v\n", errors.WithStack(err))
 
 		return
 	}
 
-	s.notifyRoomCreate(room.ID, RoomCreateResult{
+	c.notifyRoomCreate(room.ID, RoomCreateResult{
 		Room: &room,
 	})
 }
 
-func (s *connWrapper) onRoomError(payload []byte) {
+func (c *connWrapper) onRoomError(payload []byte) {
 	var room proto.Room
 
 	err := room.Read(payload)
 	if err != nil {
-		s.logger.Printf("%v\n", errors.WithStack(err))
+		c.logger.Printf("%v\n", errors.WithStack(err))
 
 		return
 	}
 
-	s.notifyRoomCreate(room.ID, RoomCreateResult{
+	c.notifyRoomCreate(room.ID, RoomCreateResult{
 		Error: errors.New(room.Error),
 	})
 }
 
-func (s *connWrapper) onRoomFinished(payload []byte) {
+func (c *connWrapper) onRoomFinished(payload []byte) {
 	var room proto.Room
 
 	err := room.Read(payload)
 	if err != nil {
-		s.logger.Printf("%v\n", errors.WithStack(err))
+		c.logger.Printf("%v\n", errors.WithStack(err))
 
 		return
 	}
 
-	s.parent.notifyFinishedRoom(&room)
+	c.parent.notifyFinishedRoom(&room)
 }
 
-func (s *connWrapper) onStats(payload []byte) {
-	err := errors.WithStack(s.stats.Read(payload))
+func (c *connWrapper) onStats(payload []byte) {
+	err := errors.WithStack(c.stats.Read(payload))
 	if err != nil {
-		s.logger.Printf("%v\n", err)
+		c.logger.Printf("%v\n", err)
 	}
 
-	s.parent.onStats()
+	c.parent.onStats()
 }
 
-func (s *connWrapper) Serve() {
-	s.clearWaiters()
+func (c *connWrapper) Serve() {
+	c.clearWaiters()
 
 	handler := processor.New()
-	handler.Register(proto.CommandSessionAuth, s.onAuth)
-	handler.Register(proto.CommandSessionRoomCreated, s.onRoomCreated)
-	handler.Register(proto.CommandSessionRoomError, s.onRoomError)
-	handler.Register(proto.CommandSessionRoomFinished, s.onRoomFinished)
-	handler.Register(proto.CommandSessionStats, s.onStats)
+	handler.Register(proto.CommandSessionAuth, c.onAuth)
+	handler.Register(proto.CommandSessionRoomCreated, c.onRoomCreated)
+	handler.Register(proto.CommandSessionRoomError, c.onRoomError)
+	handler.Register(proto.CommandSessionRoomFinished, c.onRoomFinished)
+	handler.Register(proto.CommandSessionStats, c.onStats)
 
-	s.AuthRequired(nil)
+	c.AuthRequired(nil)
 
-	err := errors.WithStack(s.conn.Serve(handler))
+	err := errors.WithStack(c.conn.Serve(handler))
 	if err != nil {
-		s.logger.Printf("%v\n", err)
+		c.logger.Printf("%v\n", err)
 	}
 }
 
 // FlushInstance take all unsent data from other equal server.
-func (s *connWrapper) FlushInstance(other *connWrapper) error {
-	if s.id != other.id {
-		return errors.Wrapf(constants.ErrInvalid, "illegal instance id: %d, required %d", other.id, s.id)
+func (c *connWrapper) FlushInstance(other *connWrapper) error {
+	if c.id != other.id {
+		return errors.Wrapf(constants.ErrInvalid, "illegal instance id: %d, required %d", other.id, c.id)
 	}
 
 	err := other.Close()
@@ -132,34 +132,34 @@ func (s *connWrapper) FlushInstance(other *connWrapper) error {
 	return nil
 }
 
-func (s *connWrapper) addWaiter(id uint64, waiter chan RoomCreateResult) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (c *connWrapper) addWaiter(id uint64, waiter chan RoomCreateResult) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	s.listeners[id] = append(s.listeners[id], waiter)
+	c.listeners[id] = append(c.listeners[id], waiter)
 }
 
-func (s *connWrapper) removeWaiters(id uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (c *connWrapper) removeWaiters(id uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	delete(s.listeners, id)
+	delete(c.listeners, id)
 }
 
-func (s *connWrapper) notifyRoomCreate(id uint64, result RoomCreateResult) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (c *connWrapper) notifyRoomCreate(id uint64, result RoomCreateResult) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
-	utils.WithChannels(s.listeners[id]).Notify(result)
+	utils.WithChannels(c.listeners[id]).Notify(result)
 }
 
-func (s *connWrapper) clearWaiters() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (c *connWrapper) clearWaiters() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	go s.closeAll(s.listeners)
+	go c.closeAll(c.listeners)
 
-	s.listeners = map[uint64][]chan RoomCreateResult{}
+	c.listeners = map[uint64][]chan RoomCreateResult{}
 }
 
 func (*connWrapper) closeAll(allWaiters map[uint64][]chan RoomCreateResult) {
@@ -172,19 +172,19 @@ func (*connWrapper) closeAll(allWaiters map[uint64][]chan RoomCreateResult) {
 	}
 }
 
-func (s *connWrapper) WaitRoomCreateResult(ctx context.Context, id uint64) <-chan RoomCreateResult {
+func (c *connWrapper) WaitRoomCreateResult(ctx context.Context, id uint64) <-chan RoomCreateResult {
 	waiter := make(chan RoomCreateResult, 1)
 
-	s.addWaiter(id, waiter)
+	c.addWaiter(id, waiter)
 
 	utils.WithChannel(waiter).
-		BeforeClose(func() { s.removeWaiters(id) }).
+		BeforeClose(func() { c.removeWaiters(id) }).
 		AsyncCloseOnDone(ctx)
 
 	return waiter
 }
 
-func (s *connWrapper) AuthRequired(err error) {
+func (c *connWrapper) AuthRequired(err error) {
 	event := event.Common{
 		Type: proto.CommandMasterAuthRequired,
 	}
@@ -193,36 +193,36 @@ func (s *connWrapper) AuthRequired(err error) {
 		event.Payload = []byte(err.Error())
 	}
 
-	s.conn.Send(&event)
+	c.conn.Send(&event)
 }
 
-func (s *connWrapper) AuthSuccess() {
-	s.conn.Send(&event.Common{
+func (c *connWrapper) AuthSuccess() {
+	c.conn.Send(&event.Common{
 		Type: proto.CommandMasterAuthSuccess,
 	})
 }
 
-func (s *connWrapper) RoomCreate(room *proto.Room) {
-	s.conn.Send(&event.Common{
+func (c *connWrapper) RoomCreate(room *proto.Room) {
+	c.conn.Send(&event.Common{
 		Type:    proto.CommandMasterRoomCreate,
 		Payload: room.Payload(),
 	})
 }
 
-func (s *connWrapper) RoomCancel(roomID proto.ID) {
-	s.conn.Send(&event.Common{
+func (c *connWrapper) RoomCancel(roomID proto.ID) {
+	c.conn.Send(&event.Common{
 		Type:    proto.CommandMasterRoomCancel,
 		Payload: proto.PayloadID(roomID),
 	})
 }
 
-func (s *connWrapper) Close() error {
-	err := s.conn.Close()
+func (c *connWrapper) Close() error {
+	err := c.conn.Close()
 	if err != nil {
 		return errors.WithStack(err)
 	}
 
-	s.clearWaiters()
+	c.clearWaiters()
 
 	return nil
 }
