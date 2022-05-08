@@ -20,18 +20,21 @@ type RoomCreateResult struct {
 }
 
 type clientWrapper struct {
-	id     uint64
 	conn   *channel.Channel
-	parent *SessionStorage
+	parent *Server
 	logger *log.Logger
-	Stats  proto.Stats
 
-	waiters map[proto.ID][]chan RoomCreateResult
-	mu      sync.RWMutex
+	// internal set only
+
+	id        uint64
+	stats     proto.Stats
+	listeners map[proto.ID][]chan RoomCreateResult
+
+	mu sync.RWMutex
 }
 
-func (s *clientWrapper) auth(payload []byte) {
-	id, err := s.parent.storage.Validate(payload)
+func (s *clientWrapper) onAuth(payload []byte) {
+	id, err := s.parent.config.Storage.Validate(payload)
 	if err != nil {
 		s.logger.Printf("%v\n", errors.WithStack(err))
 		s.AuthRequired(err)
@@ -39,11 +42,13 @@ func (s *clientWrapper) auth(payload []byte) {
 		return
 	}
 
+	s.parent.register(id, s)
+	s.parent.unregister(s.id, s)
 	s.id = id
 	s.AuthSuccess()
 }
 
-func (s *clientWrapper) roomCreated(payload []byte) {
+func (s *clientWrapper) onRoomCreated(payload []byte) {
 	var room proto.Room
 
 	err := room.Read(payload)
@@ -58,7 +63,7 @@ func (s *clientWrapper) roomCreated(payload []byte) {
 	})
 }
 
-func (s *clientWrapper) roomError(payload []byte) {
+func (s *clientWrapper) onRoomError(payload []byte) {
 	var room proto.Room
 
 	err := room.Read(payload)
@@ -73,7 +78,7 @@ func (s *clientWrapper) roomError(payload []byte) {
 	})
 }
 
-func (s *clientWrapper) roomFinished(payload []byte) {
+func (s *clientWrapper) onRoomFinished(payload []byte) {
 	var room proto.Room
 
 	err := room.Read(payload)
@@ -86,24 +91,24 @@ func (s *clientWrapper) roomFinished(payload []byte) {
 	s.parent.notifyFinishedRoom(&room)
 }
 
-func (s *clientWrapper) stats(payload []byte) {
-	err := errors.WithStack(s.Stats.Read(payload))
+func (s *clientWrapper) onStats(payload []byte) {
+	err := errors.WithStack(s.stats.Read(payload))
 	if err != nil {
 		s.logger.Printf("%v\n", err)
 	}
 
-	s.parent.TriggerStats()
+	s.parent.onStats()
 }
 
 func (s *clientWrapper) Serve() {
 	s.clearWaiters()
 
 	handler := processor.New()
-	handler.Register(proto.CommandSessionAuth, s.auth)
-	handler.Register(proto.CommandSessionRoomCreated, s.roomCreated)
-	handler.Register(proto.CommandSessionRoomError, s.roomError)
-	handler.Register(proto.CommandSessionRoomFinished, s.roomFinished)
-	handler.Register(proto.CommandSessionStats, s.stats)
+	handler.Register(proto.CommandSessionAuth, s.onAuth)
+	handler.Register(proto.CommandSessionRoomCreated, s.onRoomCreated)
+	handler.Register(proto.CommandSessionRoomError, s.onRoomError)
+	handler.Register(proto.CommandSessionRoomFinished, s.onRoomFinished)
+	handler.Register(proto.CommandSessionStats, s.onStats)
 
 	s.AuthRequired(nil)
 
@@ -131,30 +136,30 @@ func (s *clientWrapper) addWaiter(id uint64, waiter chan RoomCreateResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.waiters[id] = append(s.waiters[id], waiter)
+	s.listeners[id] = append(s.listeners[id], waiter)
 }
 
 func (s *clientWrapper) removeWaiters(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	delete(s.waiters, id)
+	delete(s.listeners, id)
 }
 
 func (s *clientWrapper) notifyRoomCreate(id uint64, result RoomCreateResult) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	utils.WithChannels(s.waiters[id]).Notify(result)
+	utils.WithChannels(s.listeners[id]).Notify(result)
 }
 
 func (s *clientWrapper) clearWaiters() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	go s.closeAll(s.waiters)
+	go s.closeAll(s.listeners)
 
-	s.waiters = map[uint64][]chan RoomCreateResult{}
+	s.listeners = map[uint64][]chan RoomCreateResult{}
 }
 
 func (*clientWrapper) closeAll(allWaiters map[uint64][]chan RoomCreateResult) {
@@ -173,7 +178,7 @@ func (s *clientWrapper) WaitRoomCreateResult(ctx context.Context, id uint64) <-c
 	s.addWaiter(id, waiter)
 
 	utils.WithChannel(waiter).
-		OnBeforeClose(func() { s.removeWaiters(id) }).
+		BeforeClose(func() { s.removeWaiters(id) }).
 		AsyncCloseOnDone(ctx)
 
 	return waiter

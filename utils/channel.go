@@ -19,13 +19,19 @@ func WithChannel[T any](channel chan T) *Channel[T] {
 	}
 }
 
-func (c *Channel[T]) OnBeforeClose(f func()) *Channel[T] {
+func (c *Channel[T]) Close() {
+	TryExec(c.beforeClose)
+	close(c.internal)
+	TryExec(c.afterClose)
+}
+
+func (c *Channel[T]) BeforeClose(f func()) *Channel[T] {
 	c.beforeClose = f
 
 	return c
 }
 
-func (c *Channel[T]) OnAfterClose(f func()) *Channel[T] {
+func (c *Channel[T]) AfterClose(f func()) *Channel[T] {
 	c.afterClose = f
 
 	return c
@@ -33,11 +39,18 @@ func (c *Channel[T]) OnAfterClose(f func()) *Channel[T] {
 
 func (c *Channel[T]) CloseOnDone(ctx context.Context) {
 	<-ctx.Done()
-	TryExec(c.beforeClose)
-	close(c.internal)
-	TryExec(c.afterClose)
+	c.Close()
 }
 
 func (c *Channel[T]) AsyncCloseOnDone(ctx context.Context) {
 	go c.CloseOnDone(ctx)
+}
+
+func (c *Channel[T]) CloseAfterFunc(f func()) {
+	f()
+	c.Close()
+}
+
+func (c *Channel[T]) AsyncCloseAfterFunc(f func()) {
+	go c.CloseAfterFunc(f)
 }
