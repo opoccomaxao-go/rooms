@@ -20,7 +20,7 @@ const DefaultRoomListenerCapacity = 100
 type Server struct {
 	config  Config
 	server  *channel.Server
-	clients map[uint64]*clientWrapper
+	clients map[uint64]*connWrapper
 
 	condStats         *sync.Cond
 	listenersFinished []chan *proto.Room
@@ -56,7 +56,7 @@ func New(cfg Config) (*Server, error) {
 
 	res := &Server{
 		config:    cfg,
-		clients:   map[uint64]*clientWrapper{},
+		clients:   map[uint64]*connWrapper{},
 		condStats: sync.NewCond(&sync.Mutex{}),
 	}
 
@@ -72,7 +72,7 @@ func New(cfg Config) (*Server, error) {
 }
 
 func (s *Server) handle(conn *channel.Channel) {
-	server := clientWrapper{
+	server := connWrapper{
 		conn:   conn,
 		parent: s,
 		logger: s.config.Logger,
@@ -81,7 +81,7 @@ func (s *Server) handle(conn *channel.Channel) {
 	server.Serve()
 }
 
-func (s *Server) register(id uint64, client *clientWrapper) {
+func (s *Server) register(id uint64, client *connWrapper) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -95,7 +95,7 @@ func (s *Server) register(id uint64, client *clientWrapper) {
 	s.clients[id] = client
 }
 
-func (s *Server) unregister(id uint64, client *clientWrapper) {
+func (s *Server) unregister(id uint64, client *connWrapper) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -110,11 +110,11 @@ func (s *Server) Serve() error {
 	return errors.WithStack(s.server.Listen())
 }
 
-func (s *Server) findFreeServer() *clientWrapper {
+func (s *Server) findFreeServer() *connWrapper {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var best *clientWrapper
+	var best *connWrapper
 
 	for _, ss := range s.clients {
 		if ss.stats.Capacity > 0 && (best == nil || ss.stats.Capacity > best.stats.Capacity) {
