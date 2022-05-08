@@ -16,5 +16,5 @@ func New(cfg Config) (*Server, error) {
 }
 
 func (s *Server) Serve() error {
-	panic("implement")
+	panic("implement") // TODO
 }

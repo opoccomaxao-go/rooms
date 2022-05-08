@@ -13,6 +13,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+const DefaultRoomListenerCapacity = 100
+
 type Server struct {
 	config         Config
 	server         *channel.Server
@@ -88,4 +90,9 @@ func (s *Server) NewRoom(userIDs []uint64) (*proto.Room, error) {
 	}
 
 	return res, nil
+}
+
+// GetFinishedRooms creates channel which closed with ctx.Done().
+func (s *Server) GetFinishedRooms(ctx context.Context) <-chan *proto.Room {
+	return s.sessionStorage.GetFinishedRooms(ctx)
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/opoccomaxao-go/ipc/processor"
 	"github.com/opoccomaxao-go/rooms/constants"
 	"github.com/opoccomaxao-go/rooms/proto"
+	"github.com/opoccomaxao-go/rooms/utils"
 	"github.com/pkg/errors"
 )
 
@@ -18,7 +19,7 @@ type RoomCreateResult struct {
 	Error error
 }
 
-type SessionServer struct {
+type clientWrapper struct {
 	id     uint64
 	conn   *channel.Channel
 	parent *SessionStorage
@@ -29,7 +30,7 @@ type SessionServer struct {
 	mu      sync.RWMutex
 }
 
-func (s *SessionServer) auth(payload []byte) {
+func (s *clientWrapper) auth(payload []byte) {
 	id, err := s.parent.storage.Validate(payload)
 	if err != nil {
 		s.logger.Printf("%v\n", errors.WithStack(err))
@@ -42,7 +43,7 @@ func (s *SessionServer) auth(payload []byte) {
 	s.AuthSuccess()
 }
 
-func (s *SessionServer) roomCreated(payload []byte) {
+func (s *clientWrapper) roomCreated(payload []byte) {
 	var room proto.Room
 
 	err := room.Read(payload)
@@ -53,12 +54,11 @@ func (s *SessionServer) roomCreated(payload []byte) {
 	}
 
 	s.notifyRoomCreate(room.ID, RoomCreateResult{
-		Room:  &room,
-		Error: nil,
+		Room: &room,
 	})
 }
 
-func (s *SessionServer) roomError(payload []byte) {
+func (s *clientWrapper) roomError(payload []byte) {
 	var room proto.Room
 
 	err := room.Read(payload)
@@ -73,11 +73,20 @@ func (s *SessionServer) roomError(payload []byte) {
 	})
 }
 
-func (s *SessionServer) roomFinished(payload []byte) {
-	panic("implement")
+func (s *clientWrapper) roomFinished(payload []byte) {
+	var room proto.Room
+
+	err := room.Read(payload)
+	if err != nil {
+		s.logger.Printf("%v\n", errors.WithStack(err))
+
+		return
+	}
+
+	s.parent.notifyFinishedRoom(&room)
 }
 
-func (s *SessionServer) stats(payload []byte) {
+func (s *clientWrapper) stats(payload []byte) {
 	err := errors.WithStack(s.Stats.Read(payload))
 	if err != nil {
 		s.logger.Printf("%v\n", err)
@@ -86,7 +95,7 @@ func (s *SessionServer) stats(payload []byte) {
 	s.parent.TriggerStats()
 }
 
-func (s *SessionServer) Serve() {
+func (s *clientWrapper) Serve() {
 	s.clearWaiters()
 
 	handler := processor.New()
@@ -105,38 +114,41 @@ func (s *SessionServer) Serve() {
 }
 
 // FlushInstance take all unsent data from other equal server.
-func (s *SessionServer) FlushInstance(other *SessionServer) error {
+func (s *clientWrapper) FlushInstance(other *clientWrapper) error {
 	if s.id != other.id {
 		return errors.Wrapf(constants.ErrInvalid, "illegal instance id: %d, required %d", other.id, s.id)
 	}
 
-	panic("implement")
+	err := other.Close()
+	if err != nil {
+		return errors.WithStack(err)
+	}
+
+	return nil
 }
 
-func (s *SessionServer) addWaiter(id uint64, waiter chan RoomCreateResult) {
+func (s *clientWrapper) addWaiter(id uint64, waiter chan RoomCreateResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.waiters[id] = append(s.waiters[id], waiter)
 }
 
-func (s *SessionServer) removeWaiters(id uint64) {
+func (s *clientWrapper) removeWaiters(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	delete(s.waiters, id)
 }
 
-func (s *SessionServer) notifyRoomCreate(id uint64, result RoomCreateResult) {
+func (s *clientWrapper) notifyRoomCreate(id uint64, result RoomCreateResult) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, waiter := range s.waiters[id] {
-		waiter <- result
-	}
+	utils.WithChannels(s.waiters[id]).Notify(result)
 }
 
-func (s *SessionServer) clearWaiters() {
+func (s *clientWrapper) clearWaiters() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -145,33 +157,29 @@ func (s *SessionServer) clearWaiters() {
 	s.waiters = map[uint64][]chan RoomCreateResult{}
 }
 
-func (*SessionServer) closeAll(allWaiters map[uint64][]chan RoomCreateResult) {
+func (*clientWrapper) closeAll(allWaiters map[uint64][]chan RoomCreateResult) {
 	if allWaiters == nil {
 		return
 	}
 
 	for _, waiters := range allWaiters {
-		for _, waiter := range waiters {
-			close(waiter)
-		}
+		utils.WithChannels(waiters).Close()
 	}
 }
 
-func (s *SessionServer) WaitRoomCreateResult(ctx context.Context, id uint64) <-chan RoomCreateResult {
+func (s *clientWrapper) WaitRoomCreateResult(ctx context.Context, id uint64) <-chan RoomCreateResult {
 	waiter := make(chan RoomCreateResult, 1)
 
 	s.addWaiter(id, waiter)
 
-	go func() {
-		<-ctx.Done()
-		s.removeWaiters(id)
-		close(waiter)
-	}()
+	utils.WithChannel(waiter).
+		OnBeforeClose(func() { s.removeWaiters(id) }).
+		AsyncCloseOnDone(ctx)
 
 	return waiter
 }
 
-func (s *SessionServer) AuthRequired(err error) {
+func (s *clientWrapper) AuthRequired(err error) {
 	event := event.Common{
 		Type: proto.CommandMasterAuthRequired,
 	}
@@ -183,22 +191,33 @@ func (s *SessionServer) AuthRequired(err error) {
 	s.conn.Send(&event)
 }
 
-func (s *SessionServer) AuthSuccess() {
+func (s *clientWrapper) AuthSuccess() {
 	s.conn.Send(&event.Common{
 		Type: proto.CommandMasterAuthSuccess,
 	})
 }
 
-func (s *SessionServer) RoomCreate(room *proto.Room) {
+func (s *clientWrapper) RoomCreate(room *proto.Room) {
 	s.conn.Send(&event.Common{
 		Type:    proto.CommandMasterRoomCreate,
 		Payload: room.Payload(),
 	})
 }
 
-func (s *SessionServer) RoomCancel(roomID proto.ID) {
+func (s *clientWrapper) RoomCancel(roomID proto.ID) {
 	s.conn.Send(&event.Common{
 		Type:    proto.CommandMasterRoomCancel,
 		Payload: proto.PayloadID(roomID),
 	})
+}
+
+func (s *clientWrapper) Close() error {
+	err := s.conn.Close()
+	if err != nil {
+		return errors.WithStack(err)
+	}
+
+	s.clearWaiters()
+
+	return nil
 }
