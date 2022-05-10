@@ -77,7 +77,7 @@ Events:
 
 - on AuthRequired
 
-Payload: auth token, byte array
+Payload: version; auth token
 
 Authorization or error handling.
 

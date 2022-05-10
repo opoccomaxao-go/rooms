@@ -34,7 +34,17 @@ type connWrapper struct {
 }
 
 func (c *connWrapper) onAuth(payload []byte) {
-	id, err := c.parent.config.Storage.Validate(payload)
+	var auth proto.Auth
+
+	err := auth.Read(payload)
+	if err != nil {
+		c.logger.Printf("%v\n", errors.WithStack(err))
+		c.AuthRequired(err)
+
+		return
+	}
+
+	id, err := c.parent.config.Storage.Validate(auth.Version, auth.Token)
 	if err != nil {
 		c.logger.Printf("%v\n", errors.WithStack(err))
 		c.AuthRequired(err)

@@ -1,8 +1,6 @@
 package storage
 
 import (
-	"bytes"
-	"encoding/hex"
 	"sync"
 	"sync/atomic"
 
@@ -11,9 +9,10 @@ import (
 )
 
 type RAM struct {
-	tokens [][]byte
-	roomID uint64
-	mu     sync.Mutex
+	tokens  []string
+	version string
+	roomID  uint64
+	mu      sync.Mutex
 }
 
 // implements interface.
@@ -23,36 +22,27 @@ func NewRAM() *RAM {
 	return &RAM{}
 }
 
-func (s *RAM) addDirect(token []byte) {
+func (s *RAM) addDirect(token string) {
 	s.mu.Lock()
 	s.tokens = append(s.tokens, token)
 	s.mu.Unlock()
 }
 
-func (s *RAM) Add(token []byte) {
-	clone := make([]byte, len(token))
-	copy(clone, token)
-	s.addDirect(clone)
+func (s *RAM) SetVersion(version string) {
+	s.version = version
 }
 
-func (s *RAM) AddFromString(token string) {
-	s.addDirect([]byte(token))
+func (s *RAM) Add(token string) {
+	s.addDirect(token)
 }
 
-func (s *RAM) AddFromHex(token string) {
-	data, err := hex.DecodeString(token)
-	if err != nil {
-		return
+func (s *RAM) Validate(version string, token string) (uint64, error) {
+	if s.version != version {
+		return 0, errors.Wrap(constants.ErrInvalid, "version")
 	}
 
-	s.addDirect(data)
-}
-
-func (s *RAM) Validate(token []byte) (uint64, error) {
-	tokens := s.tokens
-
-	for i, t := range tokens {
-		if bytes.Equal(t, token) {
+	for i, t := range s.tokens {
+		if t == token {
 			return uint64(i + 1), nil
 		}
 	}

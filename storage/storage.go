@@ -1,6 +1,6 @@
 package storage
 
 type Storage interface {
-	Validate(token []byte) (uint64, error)
+	Validate(version string, token string) (uint64, error)
 	NewRoom() uint64
 }

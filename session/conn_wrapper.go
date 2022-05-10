@@ -43,10 +43,10 @@ func (c *connWrapper) onRoomCancel(payload []byte) {
 	// TODO: implement
 }
 
-func (c *connWrapper) Auth(token []byte) {
+func (c *connWrapper) Auth(auth *proto.Auth) {
 	c.conn.Send(&event.Common{
 		Type:    proto.CommandSessionAuth,
-		Payload: token,
+		Payload: auth.Payload(),
 	})
 }
 

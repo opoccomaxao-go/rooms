@@ -14,7 +14,7 @@ func TestFlow(t *testing.T) {
 	t.Parallel()
 
 	storage := storage.NewRAM()
-	storage.Add([]byte{1, 2, 3, 4, 5})
+	storage.Add("12345")
 
 	mainServer, err := master.New(master.Config{
 		Logger:  log.Default(),
