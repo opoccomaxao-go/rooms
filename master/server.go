@@ -2,23 +2,26 @@ package master
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
 
 	"github.com/opoccomaxao-go/ipc/channel"
+	"github.com/opoccomaxao-go/rooms/apm"
 	"github.com/opoccomaxao-go/rooms/constants"
 	"github.com/opoccomaxao-go/rooms/proto"
 	"github.com/opoccomaxao-go/rooms/storage"
 	"github.com/opoccomaxao-go/rooms/utils"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
 	"golang.org/x/exp/slices"
 )
 
 const DefaultRoomListenerCapacity = 100
 
 type Server struct {
-	config  Config
+	config   Config
+	interval apm.DebuggableInterval
+
 	server  *channel.Server
 	clients map[uint64]*connWrapper
 
@@ -29,7 +32,7 @@ type Server struct {
 }
 
 type Config struct {
-	Logger         *log.Logger
+	Logger         *zerolog.Logger
 	Storage        storage.Storage
 	SessionAddress string        // SessionAddress is address for session-server listening.
 	CreateTimeout  time.Duration // CreateTimeout is NewRoom timeout.
@@ -39,7 +42,8 @@ func New(cfg Config) (*Server, error) {
 	var err error
 
 	if cfg.Logger == nil {
-		cfg.Logger = log.Default()
+		logger := zerolog.Nop()
+		cfg.Logger = &logger
 	}
 
 	if cfg.Storage == nil {
@@ -56,6 +60,7 @@ func New(cfg Config) (*Server, error) {
 
 	res := &Server{
 		config:    cfg,
+		interval:  apm.NewZerologInterval(cfg.Logger, "master.Server."),
 		clients:   map[uint64]*connWrapper{},
 		condStats: sync.NewCond(&sync.Mutex{}),
 	}
@@ -72,23 +77,28 @@ func New(cfg Config) (*Server, error) {
 }
 
 func (s *Server) handle(conn *channel.Channel) {
+	defer s.interval.Start("handle").End()
+
 	server := connWrapper{
 		conn:   conn,
 		parent: s,
-		logger: s.config.Logger,
 	}
+
+	server.init()
 
 	server.Serve()
 }
 
 func (s *Server) register(id uint64, client *connWrapper) {
+	defer s.interval.Start("register").End()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if prev, ok := s.clients[id]; ok {
 		err := errors.Wrap(client.FlushInstance(prev), "flush error")
 		if err != nil {
-			s.config.Logger.Printf("%v\n", err)
+			s.config.Logger.Err(err).Stack().Send()
 		}
 	}
 
@@ -96,6 +106,8 @@ func (s *Server) register(id uint64, client *connWrapper) {
 }
 
 func (s *Server) unregister(id uint64, client *connWrapper) {
+	defer s.interval.Start("unregister").End()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -106,13 +118,28 @@ func (s *Server) unregister(id uint64, client *connWrapper) {
 	}
 }
 
-func (s *Server) Serve() error {
+func (s *Server) Serve(ctx context.Context) error {
+	defer s.interval.Start("Serve").End()
+
+	utils.WithContext(ctx).
+		AsyncOnDone(func() {
+			err := s.Close()
+			if err != nil {
+				s.config.Logger.Err(err).Stack().Send()
+			}
+		})
+
 	return errors.WithStack(s.server.Listen())
 }
 
+func (s *Server) Close() error {
+	defer s.interval.Start("Close").End()
+
+	return errors.WithStack(s.server.Close())
+}
+
 func (s *Server) findFreeServer() *connWrapper {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.interval.Start("findFreeServer").End()
 
 	var best *connWrapper
 
@@ -126,10 +153,14 @@ func (s *Server) findFreeServer() *connWrapper {
 }
 
 func (s *Server) onStats() {
+	defer s.interval.Start("onStats").End()
+
 	s.condStats.Broadcast()
 }
 
 func (s *Server) waitStats() <-chan struct{} {
+	defer s.interval.Start("waitStats").End()
+
 	res := make(chan struct{}, 1)
 
 	utils.WithChannel(res).
@@ -139,7 +170,9 @@ func (s *Server) waitStats() <-chan struct{} {
 	return res
 }
 
-func (s *Server) CreateRoom(userIDs []uint64) (*proto.Room, error) {
+func (s *Server) CreateRoom(ctx context.Context, userIDs []uint64) (*proto.Room, error) {
+	defer s.interval.Start("CreateRoom").End()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -149,15 +182,23 @@ func (s *Server) CreateRoom(userIDs []uint64) (*proto.Room, error) {
 	}
 
 	for index, id := range userIDs {
-		room.Clients[index].ID = id
+		room.Clients[index] = &proto.Client{
+			ID: id,
+		}
 	}
 
-	ctx, cancelFn := context.WithTimeout(context.TODO(), s.config.CreateTimeout)
+	ctx, cancelFn := context.WithTimeout(ctx, s.config.CreateTimeout)
 	defer cancelFn()
 
 	done := ctx.Done()
 
 	for {
+		select {
+		case <-done:
+			return nil, ctx.Err()
+		default:
+		}
+
 		best := s.findFreeServer()
 
 		if best == nil {
@@ -190,6 +231,8 @@ func (s *Server) CreateRoom(userIDs []uint64) (*proto.Room, error) {
 }
 
 func (s *Server) pushFinishedListener(listener chan *proto.Room) {
+	defer s.interval.Start("pushFinishedListener").End()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -197,6 +240,8 @@ func (s *Server) pushFinishedListener(listener chan *proto.Room) {
 }
 
 func (s *Server) removeFinishedListener(listener chan *proto.Room) {
+	defer s.interval.Start("removeFinishedListener").End()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -210,6 +255,8 @@ func (s *Server) removeFinishedListener(listener chan *proto.Room) {
 
 // FinishedRooms creates channel-receiver of all finished rooms. To close channel cancel context ctx.
 func (s *Server) FinishedRooms(ctx context.Context) <-chan *proto.Room {
+	defer s.interval.Start("FinishedRooms").End()
+
 	res := make(chan *proto.Room, DefaultRoomListenerCapacity)
 
 	s.pushFinishedListener(res)
@@ -222,6 +269,8 @@ func (s *Server) FinishedRooms(ctx context.Context) <-chan *proto.Room {
 }
 
 func (s *Server) notifyFinishedRoom(room *proto.Room) {
+	defer s.interval.Start("notifyFinishedRoom").End()
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

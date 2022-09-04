@@ -3,10 +3,11 @@ package utils
 import "context"
 
 // Channel usage:
-//  WithChannel(someChan).
-//    OnBeforeClose(func(){ ... }).
-//    OnAfterClose(func(){ ... }).
-//    AsyncCloseOnDone(ctx)
+//
+//	WithChannel(someChan).
+//	  OnBeforeClose(func(){ ... }).
+//	  OnAfterClose(func(){ ... }).
+//	  AsyncCloseOnDone(ctx)
 type Channel[T any] struct {
 	internal    chan T
 	beforeClose func()

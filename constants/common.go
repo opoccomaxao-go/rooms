@@ -7,4 +7,6 @@ const (
 
 	DefaultTimeout          = time.Second * 10
 	DefaultTimeoutReconnect = time.Second * 10
+
+	Version = "1"
 )
