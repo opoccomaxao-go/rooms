@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/opoccomaxao-go/rooms/constants"
+	"github.com/opoccomaxao-go/rooms/engine/engtest"
 	"github.com/opoccomaxao-go/rooms/master"
 	"github.com/opoccomaxao-go/rooms/proto"
 	"github.com/opoccomaxao-go/rooms/session"
@@ -58,6 +59,7 @@ func TestFlow(t *testing.T) {
 	sessionServer, err := session.New(session.Config{
 		MasterAddress: constants.DefaultAddress,
 		Token:         []byte(AuthToken),
+		EngineFactory: engtest.New(),
 		Logger:        &logger,
 	})
 	require.NoError(t, err)
@@ -78,7 +80,8 @@ func TestFlow(t *testing.T) {
 		Clients: []*proto.Client{
 			{ID: UserID},
 		},
+		ServerID: 1,
 	}, room)
 
-	_ = sessionServer
+	// TODO: implement.
 }

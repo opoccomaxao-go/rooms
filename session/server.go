@@ -9,6 +9,7 @@ import (
 	"github.com/opoccomaxao-go/ipc/channel"
 	"github.com/opoccomaxao-go/rooms/apm"
 	"github.com/opoccomaxao-go/rooms/constants"
+	"github.com/opoccomaxao-go/rooms/engine"
 	"github.com/opoccomaxao-go/rooms/proto"
 	"github.com/opoccomaxao-go/rooms/utils"
 	"github.com/pkg/errors"
@@ -27,9 +28,10 @@ type Server struct {
 }
 
 type Config struct {
-	MasterAddress    string        // MasterAddress is address of master.Server
-	Token            []byte        // Token is auth token.
-	ReconnectTimeout time.Duration // optional. Default = constants.DefaultTimeoutReconnect
+	MasterAddress    string         // MasterAddress is address of master.Server
+	Token            []byte         // Token is auth token.
+	ReconnectTimeout time.Duration  // optional. Default = constants.DefaultTimeoutReconnect
+	EngineFactory    engine.Factory // EngineFactory constructs new Engine instance.
 
 	Logger *zerolog.Logger
 }
@@ -41,6 +43,10 @@ func New(cfg Config) (*Server, error) {
 
 	if len(cfg.Token) == 0 {
 		return nil, errors.WithMessage(constants.ErrNoParam, "Token")
+	}
+
+	if cfg.EngineFactory == nil {
+		return nil, errors.WithMessage(constants.ErrNoParam, "EngineFactory")
 	}
 
 	if cfg.ReconnectTimeout <= 0 {
@@ -127,11 +133,40 @@ func (s *Server) onAuthError(errText string) {
 func (s *Server) onRoomCreate(room *proto.Room) {
 	defer s.interval.Start("onRoomCreate").End()
 
-	// TODO: implement
+	roomInstance := roomWrapper{
+		roomData: room,
+		parent:   s,
+	}
+	roomInstance.init()
+
+	s.rooms = append(s.rooms, &roomInstance)
+
+	go roomInstance.Serve(s.config.EngineFactory.New())
+
+	// TODO: add client sockets.
+
+	s.masterConn.RoomCreated(room)
 }
 
 func (s *Server) onRoomCancel(roomID uint64) {
 	defer s.interval.Start("onRoomCancel").End()
 
-	// TODO: implement
+	s.removeRoom(roomID)
+}
+
+func (s *Server) onSessionEnd(roomID uint64) {
+	defer s.interval.Start("onSessionEnd").End()
+
+	roomResult := s.removeRoom(roomID)
+	s.masterConn.RoomFinished(roomResult)
+}
+
+func (s *Server) removeRoom(roomID uint64) *proto.Room {
+	res := proto.Room{
+		ID: roomID,
+	}
+
+	// TODO: implement.
+
+	return &res
 }

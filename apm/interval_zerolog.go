@@ -1,10 +1,15 @@
 package apm
 
 import (
+	"sync/atomic"
+
 	"github.com/rs/zerolog"
 )
 
 var _ DebuggableInterval = (*intervalZerolog)(nil)
+
+//noling:gochecknoglobals // required for debug.
+var id uint64
 
 type intervalZerolog struct {
 	logger *zerolog.Logger
@@ -19,7 +24,10 @@ func NewZerologInterval(logger *zerolog.Logger, prefix string) DebuggableInterva
 }
 
 func (i *intervalZerolog) Start(name string) Interval {
-	logger := i.logger.With().Str("name", i.prefix+name).Logger()
+	logger := i.logger.With().
+		Str("name", i.prefix+name).
+		Uint64("id", atomic.AddUint64(&id, 1)).
+		Logger()
 	logger.Debug().Msg("start")
 
 	return func() {

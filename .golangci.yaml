@@ -31,3 +31,8 @@ linters:
 
 issues:
   fix: true
+  exclude-rules:
+    - path: (.+)_test.go
+      linters:
+        - funlen
+        - goconst
